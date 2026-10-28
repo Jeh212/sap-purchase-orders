@@ -221,8 +221,8 @@ describe("execute() result format: JSON string with { ok: boolean }", () => {
     assertToolResult(raw, "po_create")
   })
 
-  it("stub tools return { ok: false, error: string } (Phase 3 not yet implemented)", async () => {
-    const raw = await po.read_package.execute({ case_id: "req-001" }, CTX)
+  it("returns { ok: false, error: string } when case_id does not exist", async () => {
+    const raw = await po.read_package.execute({ case_id: "does-not-exist-xyz" }, CTX)
     const result = JSON.parse(raw) as { ok: boolean; error?: string }
     expect(result.ok).toBe(false)
     expect(typeof result.error).toBe("string")

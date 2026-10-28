@@ -36,9 +36,16 @@ export interface ConfirmationStore {
    * Called when request data changes or a new payload is built.
    */
   invalidate(requestId: string): void
+
+  /**
+   * Mark a confirmed entry as consumed (single-use enforcement).
+   * Called by po_create after successfully creating a PO.
+   * No-op if the entry doesn't exist or hash doesn't match.
+   */
+  consume(requestId: string, payloadHash: string): void
 }
 
-const TTL_MS = 30 * 60 * 1000 // 30 minutes
+const DEFAULT_TTL_MS = 30 * 60 * 1000 // 30 minutes
 
 type Entry = {
   payloadHash: string
@@ -49,6 +56,11 @@ type Entry = {
 
 export class InMemoryConfirmationStore implements ConfirmationStore {
   private readonly entries = new Map<string, Entry>()
+  private readonly ttlMs: number
+
+  constructor(ttlMs: number = DEFAULT_TTL_MS) {
+    this.ttlMs = ttlMs
+  }
 
   setPending(requestId: string, payloadHash: string, codes: string[]): void {
     this.entries.set(requestId, {
@@ -96,10 +108,6 @@ export class InMemoryConfirmationStore implements ConfirmationStore {
     this.entries.delete(requestId)
   }
 
-  /**
-   * Called by po_create after successfully consuming a confirmed entry.
-   * Marks the entry consumed so it cannot be used again (single-use).
-   */
   consume(requestId: string, payloadHash: string): void {
     const entry = this.entries.get(requestId)
     if (entry === undefined || entry.payloadHash !== payloadHash) return
@@ -111,10 +119,15 @@ export class InMemoryConfirmationStore implements ConfirmationStore {
     return this.entries.get(requestId)?.codes ?? []
   }
 
+  /** Returns the stored payload hash for a request — for testing only. */
+  getStoredHash(requestId: string): string | undefined {
+    return this.entries.get(requestId)?.payloadHash
+  }
+
   private isExpired(entry: Entry): boolean {
     return (
       (entry.status === "pending" || entry.status === "confirmed") &&
-      Date.now() - entry.timestamp > TTL_MS
+      Date.now() - entry.timestamp > this.ttlMs
     )
   }
 }
