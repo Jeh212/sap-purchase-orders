@@ -1,0 +1,10 @@
+{
+  "from": "fvargas@periferia-fictitious.com",
+  "to": "pedro.ayala@periferia-fictitious.com",
+  "cc": [
+    "purchasing@periferia-fictitious.com"
+  ],
+  "date": "2026-08-25T09:10:00-05:00",
+  "subject": "RE: Purchase order request REQ-003",
+  "body": "Approved from Sales; it is for the presales team that is moving to the new office.\n\nFelipe Vargas"
+}

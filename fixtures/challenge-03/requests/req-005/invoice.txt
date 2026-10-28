@@ -1,0 +1,11 @@
+ELECTRONIC SALES INVOICE No. FC-88231
+Issue date: 2026-08-10
+Seller: Papelería Central Ltda. - NIT 800.444.555-3
+Buyer: Periferia IT Group S.A.S. - NIT 900.123.456-7
+
+Description: Quarterly stationery and toner package
+Taxable base: COP 2,689,076
+VAT 19%: COP 510,924
+TOTAL: COP 3,200,000
+
+Payment method: 15-day credit.

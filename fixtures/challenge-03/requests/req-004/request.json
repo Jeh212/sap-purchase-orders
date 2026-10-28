@@ -1,0 +1,16 @@
+{
+  "request_id": "REQ-2026-004",
+  "requester": "Natalia Ríos",
+  "supplier_name": "Cloud Andina S.A.S.",
+  "supplier_tax_id": "901222333",
+  "description": "Pool of 100 cloud architecture hours for the migration",
+  "cost_center": "CC-1010",
+  "subarea": "Development",
+  "quantity": 100,
+  "unit_price": 250000,
+  "total_value": 25000000,
+  "currency": "COP",
+  "tax_code": "C1",
+  "payment_terms": "Z000",
+  "request_date": "2026-08-26"
+}

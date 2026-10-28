@@ -1,0 +1,16 @@
+{
+  "request_id": "REQ-2026-001",
+  "requester": "Juan Camargo",
+  "supplier_name": "TecnoSuministros S.A.S.",
+  "supplier_tax_id": "900555111",
+  "description": "Corporate antivirus license renewal for 120 seats, 12-month term",
+  "cost_center": "CC-1010",
+  "subarea": "Infrastructure",
+  "quantity": 120,
+  "unit_price": 95000,
+  "total_value": 11400000,
+  "currency": "COP",
+  "tax_code": "C1",
+  "payment_terms": "Z030",
+  "request_date": "2026-08-20"
+}

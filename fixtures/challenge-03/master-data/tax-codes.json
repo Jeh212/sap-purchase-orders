@@ -1,0 +1,17 @@
+[
+  {
+    "code": "C0",
+    "description": "Excluded / not taxable",
+    "rate": 0
+  },
+  {
+    "code": "C1",
+    "description": "VAT 19%",
+    "rate": 0.19
+  },
+  {
+    "code": "C2",
+    "description": "VAT 5%",
+    "rate": 0.05
+  }
+]

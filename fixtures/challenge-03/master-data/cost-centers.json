@@ -1,0 +1,53 @@
+[
+  {
+    "cost_center": "CC-1010",
+    "name": "Technology",
+    "subareas": [
+      "Infrastructure",
+      "Support",
+      "Development"
+    ],
+    "approvers": [
+      {
+        "email": "mlopez@periferia-fictitious.com",
+        "name": "Mariana López Cárdenas",
+        "limit": 50000000
+      },
+      {
+        "email": "dgarcia@periferia-fictitious.com",
+        "name": "Diego García Rincón",
+        "limit": 200000000
+      }
+    ]
+  },
+  {
+    "cost_center": "CC-2020",
+    "name": "Administration",
+    "subareas": [
+      "Purchasing",
+      "General Services"
+    ],
+    "approvers": [
+      {
+        "email": "rtorres@periferia-fictitious.com",
+        "name": "Rocío Torres Ibáñez",
+        "limit": 30000000
+      }
+    ]
+  },
+  {
+    "cost_center": "CC-3030",
+    "name": "Sales",
+    "subareas": [
+      "Presales",
+      "Marketing"
+    ],
+    "approvers": [
+      {
+        "email": "fvargas@periferia-fictitious.com",
+        "name": "Felipe Vargas Ocampo",
+        "limit": 80000000
+      }
+    ]
+  }
+]

@@ -1,0 +1,15 @@
+QUOTE PC-5520
+Date: 2026-08-05
+Supplier: Papelería Central Ltda.
+Tax ID (NIT): 800.444.555-3
+Client: Periferia IT Group S.A.S. - NIT 900.123.456-7
+
+ITEMS
+1. Quarterly stationery and toner package | Quantity: 1 | Unit price (VAT incl.): COP 3,200,000 | Subtotal: COP 3,200,000
+
+Taxable base: COP 2,689,076
+VAT 19%: COP 510,924
+TOTAL (VAT included): COP 3,200,000
+
+Offer validity: 30 days
+Payment terms: as per the current commercial agreement.

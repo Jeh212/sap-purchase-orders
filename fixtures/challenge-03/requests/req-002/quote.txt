@@ -1,0 +1,15 @@
+QUOTE SDN-0093
+Date: 2026-08-21
+Supplier: Soluciones Digitales del Norte S.A.S.
+Tax ID (NIT): 901.999.000-5
+Client: Periferia IT Group S.A.S. - NIT 900.123.456-7
+
+ITEMS
+1. Annual automated testing license, per user | Quantity: 5 | Unit price (VAT incl.): COP 1,700,000 | Subtotal: COP 8,500,000
+
+Taxable base: COP 7,142,857
+VAT 19%: COP 1,357,143
+TOTAL (VAT included): COP 8,500,000
+
+Offer validity: 15 days
+Payment terms: as per the current commercial agreement.

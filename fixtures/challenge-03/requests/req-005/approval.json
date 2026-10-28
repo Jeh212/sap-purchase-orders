@@ -1,0 +1,10 @@
+{
+  "from": "rtorres@periferia-fictitious.com",
+  "to": "camila.ortiz@periferia-fictitious.com",
+  "cc": [
+    "purchasing@periferia-fictitious.com"
+  ],
+  "date": "2026-08-28T08:20:00-05:00",
+  "subject": "RE: Purchase order request REQ-005",
+  "body": "Approved. The invoice has already arrived, please create the PO so we can file it.\n\nRocío Torres"
+}

@@ -1,0 +1,15 @@
+QUOTE COT-TS-2026-0468
+Date: 2026-08-28
+Supplier: TecnoSuministros S.A.S.
+Tax ID (NIT): 900.555.111-2
+Client: Periferia IT Group S.A.S. - NIT 900.123.456-7
+
+ITEMS
+1. USB headset with microphone and noise cancellation | Quantity: 30 | Unit price (VAT incl.): COP 180,000 | Subtotal: COP 5,400,000
+
+Taxable base: COP 4,537,815
+VAT 19%: COP 862,185
+TOTAL (VAT included): COP 5,400,000
+
+Offer validity: 30 days
+Payment terms: as per the current commercial agreement.

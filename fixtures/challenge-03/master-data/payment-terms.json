@@ -1,0 +1,22 @@
+[
+  {
+    "code": "Z000",
+    "description": "Immediate payment",
+    "days": 0
+  },
+  {
+    "code": "Z015",
+    "description": "15 days from invoice date",
+    "days": 15
+  },
+  {
+    "code": "Z030",
+    "description": "30 days from invoice date",
+    "days": 30
+  },
+  {
+    "code": "Z060",
+    "description": "60 days from invoice date",
+    "days": 60
+  }
+]

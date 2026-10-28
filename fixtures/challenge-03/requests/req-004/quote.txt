@@ -1,0 +1,15 @@
+QUOTE CA-2026-0310
+Date: 2026-08-25
+Supplier: Cloud Andina S.A.S.
+Tax ID (NIT): 901.222.333-1
+Client: Periferia IT Group S.A.S. - NIT 900.123.456-7
+
+ITEMS
+1. Senior cloud architect hour | Quantity: 100 | Unit price (VAT incl.): COP 265,000 | Subtotal: COP 26,500,000
+
+Taxable base: COP 22,268,908
+VAT 19%: COP 4,231,092
+TOTAL (VAT included): COP 26,500,000
+
+Offer validity: 20 days
+Payment terms: as per the current commercial agreement.

@@ -1,0 +1,15 @@
+QUOTE MA-2026-1177
+Date: 2026-08-20
+Supplier: Mobiliario Andino S.A.
+Tax ID (NIT): 830.111.222-8
+Client: Periferia IT Group S.A.S. - NIT 900.123.456-7
+
+ITEMS
+1. 1.40 m workstation with ergonomic chair | Quantity: 40 | Unit price (VAT incl.): COP 1,850,000 | Subtotal: COP 74,000,000
+
+Taxable base: COP 62,184,874
+VAT 19%: COP 11,815,126
+TOTAL (VAT included): COP 74,000,000
+
+Offer validity: 45 days
+Payment terms: as per the current commercial agreement.

@@ -1,0 +1,16 @@
+{
+  "request_id": "REQ-2026-003",
+  "requester": "Pedro Ayala",
+  "supplier_name": "Mobiliario Andino S.A.",
+  "supplier_tax_id": "830111222",
+  "description": "Furniture for the new office: 40 workstations with ergonomic chairs",
+  "cost_center": "CC-2020",
+  "subarea": "General Services",
+  "quantity": 40,
+  "unit_price": 1850000,
+  "total_value": 74000000,
+  "currency": "COP",
+  "tax_code": "C1",
+  "payment_terms": "Z030",
+  "request_date": "2026-08-24"
+}

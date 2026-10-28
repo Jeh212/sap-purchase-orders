@@ -1,0 +1,16 @@
+{
+  "request_id": "REQ-2026-005",
+  "requester": "Camila Ortiz",
+  "supplier_name": "Papelería Central Ltda.",
+  "supplier_tax_id": "800444555",
+  "description": "Stationery and toner for the quarter",
+  "cost_center": "CC-2020",
+  "subarea": "Purchasing",
+  "quantity": 1,
+  "unit_price": 3200000,
+  "total_value": 3200000,
+  "currency": "COP",
+  "tax_code": "C1",
+  "payment_terms": "Z015",
+  "request_date": "2026-08-27"
+}

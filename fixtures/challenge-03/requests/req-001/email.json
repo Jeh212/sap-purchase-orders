@@ -1,0 +1,14 @@
+{
+  "id": "req-001-email",
+  "from": "juan.camargo@periferia-fictitious.com",
+  "to": "purchasing@periferia-fictitious.com",
+  "subject": "Purchase order request REQ-001 - Corporate antivirus license renewal for ",
+  "date": "2026-08-20T09:00:00-05:00",
+  "body": "Hi Camila,\n\nAttached are the purchase request, the supplier's quote and my manager's approval email. I look forward to the purchase order.\n\nThanks,\nJuan Camargo",
+  "attachments": [
+    "request.xlsx",
+    "quote.pdf",
+    "approval.eml"
+  ],
+  "fixture_note": "Binary attachments are delivered normalized: request.xlsx → request.json, quote.pdf → quote.txt, approval.eml → approval.json, invoice.pdf → invoice.txt"
+}

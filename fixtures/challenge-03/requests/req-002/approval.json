@@ -1,0 +1,10 @@
+{
+  "from": "mlopez@periferia-fictitious.com",
+  "to": "sofía.herrera@periferia-fictitious.com",
+  "cc": [
+    "purchasing@periferia-fictitious.com"
+  ],
+  "date": "2026-08-22T15:30:00-05:00",
+  "subject": "RE: Purchase order request REQ-002",
+  "body": "Approved.\n\nMariana López"
+}

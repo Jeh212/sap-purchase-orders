@@ -1,0 +1,42 @@
+[
+  {
+    "sap_code": "100234",
+    "tax_id": "900555111",
+    "name": "TecnoSuministros S.A.S.",
+    "default_payment_terms": "Z030",
+    "default_tax_code": "C1",
+    "active": true
+  },
+  {
+    "sap_code": "100310",
+    "tax_id": "901222333",
+    "name": "Cloud Andina S.A.S.",
+    "default_payment_terms": "Z000",
+    "default_tax_code": "C1",
+    "active": true
+  },
+  {
+    "sap_code": "100118",
+    "tax_id": "800444555",
+    "name": "Papelería Central Ltda.",
+    "default_payment_terms": "Z015",
+    "default_tax_code": "C1",
+    "active": true
+  },
+  {
+    "sap_code": "100150",
+    "tax_id": "830111222",
+    "name": "Mobiliario Andino S.A.",
+    "default_payment_terms": "Z030",
+    "default_tax_code": "C1",
+    "active": true
+  },
+  {
+    "sap_code": "100402",
+    "tax_id": "901777888",
+    "name": "Consultores Ágiles S.A.S.",
+    "default_payment_terms": "Z030",
+    "default_tax_code": "C1",
+    "active": false
+  }
+]

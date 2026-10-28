@@ -1,0 +1,15 @@
+{
+  "id": "req-005-email",
+  "from": "camila.ortiz@periferia-fictitious.com",
+  "to": "purchasing@periferia-fictitious.com",
+  "subject": "Purchase order request REQ-005 - Stationery and toner for the quarter",
+  "date": "2026-08-27T09:00:00-05:00",
+  "body": "Hi Camila,\n\nAttached are the purchase request, the supplier's quote and my manager's approval email. I look forward to the purchase order.\n\nThanks,\nCamila Ortiz",
+  "attachments": [
+    "request.xlsx",
+    "quote.pdf",
+    "approval.eml",
+    "invoice.pdf"
+  ],
+  "fixture_note": "Binary attachments are delivered normalized: request.xlsx → request.json, quote.pdf → quote.txt, approval.eml → approval.json, invoice.pdf → invoice.txt"
+}

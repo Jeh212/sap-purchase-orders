@@ -1,0 +1,13 @@
+{
+  "request_id": "REQ-2026-006",
+  "requester": "Andrés Beltrán",
+  "supplier_name": "TecnoSuministros S.A.S.",
+  "description": "Headsets with microphone for the support desk",
+  "cost_center": "CC-1010",
+  "subarea": "Support",
+  "quantity": 30,
+  "unit_price": 180000,
+  "total_value": 5400000,
+  "currency": "COP",
+  "request_date": "2026-08-29"
+}

@@ -1,0 +1,16 @@
+{
+  "request_id": "REQ-2026-002",
+  "requester": "Sofía Herrera",
+  "supplier_name": "Soluciones Digitales del Norte S.A.S.",
+  "supplier_tax_id": "901999000",
+  "description": "Annual license for automated testing tool, 5 users",
+  "cost_center": "CC-1010",
+  "subarea": "Development",
+  "quantity": 5,
+  "unit_price": 1700000,
+  "total_value": 8500000,
+  "currency": "COP",
+  "tax_code": "C1",
+  "payment_terms": "Z030",
+  "request_date": "2026-08-22"
+}
