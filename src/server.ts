@@ -4,8 +4,20 @@ import cors from "@fastify/cors"
 import rateLimit from "@fastify/rate-limit"
 import { z } from "zod"
 import * as fs from "node:fs/promises"
+import { readFileSync } from "node:fs"
 import * as path from "node:path"
 import { pathToFileURL } from "node:url"
+
+// Load .env for local development. Must not overwrite variables already set in the
+// environment (so Render Dashboard env vars always take priority). Silent on missing file.
+try {
+  for (const line of readFileSync(path.join(process.cwd(), ".env"), "utf-8").split("\n")) {
+    const m = line.trim().match(/^([A-Z_][A-Z0-9_]*)=(.*)$/)
+    if (m?.[1] && process.env[m[1]] === undefined) {
+      process.env[m[1]] = m[2]!.replace(/^["']|["']$/g, "")
+    }
+  }
+} catch { /* .env is optional — no .env in production or fresh checkout */ }
 import type { LlmAdapter, LlmMessage, LlmToolCall } from "./llm/adapter.js"
 import { isRecord } from "./llm/adapter.js"
 import { createLlmAdapterFromEnv } from "./llm/factory.js"

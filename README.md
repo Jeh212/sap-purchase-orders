@@ -1,10 +1,17 @@
 # SAP Purchase Orders — Conversational Agent (Challenge 03)
 
+**Repository:** https://github.com/Jeh212/sap-purchase-orders
+
+**Live demo:** https://sap-purchase-orders.onrender.com/
+
+> The hosted URL is public. Real LLM chat requires a configured API key (see below). The
+> deterministic demo and all automated tests work without any key.
+
 A conversational AI agent that automates SAP purchase-order preparation. The analyst types a
 request into a web chat; the agent reads the package, validates it against master data, applies
-10 business controls (RC1–RC10), builds a typed SAP payload with approval evidence, and creates
-the purchase order in a simulated SAP — blocking invalid orders and requesting explicit human
-confirmation for each exception.
+10 business controls (RC1–RC10), builds a typed SAP payload with approval evidence (plain text
++ PDF), and creates the purchase order in a simulated SAP — blocking invalid orders and
+requesting explicit human confirmation for each exception.
 
 ---
 
@@ -23,10 +30,13 @@ required only to run the real conversational agent.
 ## Installation
 
 ```bash
-git clone <repo-url>
-cd challenge-03
+git clone https://github.com/Jeh212/sap-purchase-orders.git
+cd sap-purchase-orders
 npm install
 ```
+
+> Node.js 20 or later is required. Node.js 22 is recommended for local development
+> (the `.env` loader in `src/server.ts` uses only built-ins and works on all supported versions).
 
 ---
 
@@ -37,6 +47,11 @@ Copy the example environment file and edit it:
 ```bash
 cp .env.example .env
 ```
+
+`src/server.ts` loads `.env` at startup using Node.js built-ins — no `dotenv` package is
+required. Variables already set in the environment (e.g. Render Dashboard) take priority.
+The server starts and serves the UI even if `.env` is absent or empty; only `/api/chat`
+returns HTTP 503 until a valid LLM_PROVIDER and key are configured.
 
 ### Option A — Anthropic (default)
 
@@ -149,6 +164,7 @@ Generated files are written to `out/demo-<timestamp>/`:
 | File | Description |
 |------|-------------|
 | `out/demo-*/req-001/approval.txt` | Canonical approval email + SHA-256 digest |
+| `out/demo-*/req-001/approval.pdf` | PDF version of the approval email (Phase 8 P1) |
 | `out/demo-*/req-001/traceability.json` | Every PO field mapped to its data source |
 | `out/demo-*/sap/orders.jsonl` | Append-only log of created purchase orders |
 | `out/demo-*/control.csv` | Audit log with CREATED, BLOCKED, PENDING, IDEMPOTENT rows |
@@ -180,8 +196,8 @@ npm audit --omit=dev
 Expected result for `npm run test:backend`:
 
 ```
-Test Files  8 passed | 2 skipped (10)
-      Tests  259 passed | 7 skipped (266)
+Test Files  10 passed | 2 skipped (12)
+      Tests  282 passed | 7 skipped (289)
 ```
 
 The 2 skipped test *files* are the live-provider integration tests (`tests/llm/`,
@@ -225,7 +241,7 @@ Browser acceptance: 6 passed, 0 failed (deterministic adapter)
 |--------|------|---------------|----------|
 | `POST` | `/api/chat` | `{ sessionId?: string, message: string, confirm?: boolean }` | `{ reply, toolCalls[], needsConfirmation, pendingConfirmation, tokenUsage, sessionId }` |
 | `GET` | `/api/sessions/:id` | — | Full event history, pending confirmation state, token usage |
-| `GET` | `/api/health` | — | `{ ok, provider, model }` — no API key material |
+| `GET` | `/api/health` | — | `{ ok, provider, model, llmConfigured }` — no API key material |
 
 To send a human confirmation after the agent pauses:
 
@@ -269,18 +285,29 @@ PORT=3000 LLM_PROVIDER=anthropic LLM_MODEL=claude-sonnet-5-5 \
   ANTHROPIC_API_KEY=sk-ant-... node dist/src/server.js
 ```
 
-### Fly.io (recommended cloud deployment)
+### Render Free (cloud deployment)
 
-Fly.io free tier provides persistent volumes required for the file-backed SAP mock.
+The service is configured for Render Free via `render.yaml` at the repository root.
 
-```bash
-fly auth login
-fly launch --no-deploy
-fly volumes create po_out --size 1 --region <region>
-fly secrets set ANTHROPIC_API_KEY=sk-ant-...
-fly secrets set OUT_DIR=/data/out
-fly deploy
-```
+**Steps (Render Dashboard):**
+
+1. Go to [dashboard.render.com](https://dashboard.render.com) → **New** → **Web Service**.
+2. Connect the repository `Jeh212/sap-purchase-orders`, branch `Jeh212/periferia-challenge-03-plan`.
+3. Render auto-detects `render.yaml`; confirm the settings.
+4. Under **Environment Variables**, add:
+   - `LLM_PROVIDER` = `anthropic`
+   - `LLM_MODEL` = `claude-sonnet-5-5`
+   - `ANTHROPIC_API_KEY` = `<your key>`
+5. Click **Deploy** (~2 min build).
+
+The server starts and serves the UI even without credentials. The `/api/chat` endpoint returns
+HTTP 503 until the key variables are set. The reviewer can add or update environment variables
+in the Dashboard under **Environment** without redeploying.
+
+**Storage note:** Render Free uses ephemeral storage. Output files (`out/sap/orders.jsonl`,
+`control.csv`) are written to the container filesystem and are lost when the instance restarts
+or sleeps. Counter recovery on startup maintains sequential PO numbers within a running session.
+This is acceptable for a demonstration; production use would require a database.
 
 ---
 
@@ -288,7 +315,7 @@ fly deploy
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `Missing LLM credentials` on startup | No API key set | Add `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` to `.env` |
+| `/api/chat` returns HTTP 503 | LLM provider not configured | Add `LLM_PROVIDER`, `LLM_MODEL`, and the key to `.env`; the server starts fine without credentials |
 | `Your credit balance is too low` | API key has no credits | Add credits at console.anthropic.com or switch to a funded key |
 | Agent returns "I have reached the iteration limit" | Too many tool calls | Increase `MAX_ITERATIONS` in `.env` |
 | `case not found` tool error | Fixture directory missing | Verify `fixtures/challenge-03/requests/<case>/` exists |
@@ -299,10 +326,71 @@ fly deploy
 
 ---
 
+## Reusable Module (Phase 8 Bonus)
+
+The agent is also packaged as a standalone module usable without the Fastify server:
+
+```
+module/
+├── agent.md                        # agent definition (YAML frontmatter + system prompt)
+├── tools/po.ts                     # re-exports the five tools — no HTTP server required
+└── skill/purchase-orders/SKILL.md  # process knowledge (YAML frontmatter + knowledge body)
+```
+
+**Using the module:**
+
+```typescript
+import { read_package, validate, generate_evidence, build_payload, create } from "./module/tools/po.js"
+
+const result = JSON.parse(
+  await read_package.execute({ case_id: "req-001" }, { directory: ROOT, sessionId: "s1" })
+)
+```
+
+The module re-exports from `src/tools/po.ts` and the compiled output is at
+`dist/module/tools/po.js`. No Fastify, no LLM adapter is initialized on import.
+
+**Distribution model:** the module depends on `src/domain/*` and `src/sap/*` (business logic)
+which are part of this repository. It is not a standalone npm package — consumers clone or
+copy the full repository and import either the TypeScript source (with a TS runner such as
+`tsx`) or the compiled JS from `dist/module/tools/po.js`.
+
+Runtime dependencies: `zod`, `pdf-lib` (declared in `package.json`).
+
+Run the consistency check to verify the module has not diverged from canonical sources:
+
+```bash
+npm run module:check
+```
+
+---
+
+## Optional Features (Phase 8)
+
+### PDF Approval Evidence
+
+`po_generate_evidence` now produces both:
+- `out/<case>/approval.txt` — the canonical P0 artifact (SHA-256 content hash unchanged)
+- `out/<case>/approval.pdf` — a valid PDF with the same email headers and body (P1 bonus)
+
+The PDF path is returned in `po_generate_evidence`'s result as `pdf_path`. The SHA-256 in
+`approval.txt` remains canonical; it is not affected by PDF generation.
+
+### XLSX Ingestion (Deferred)
+
+The `po_read_excel` optional tool was deferred. The primary candidate (`xlsx` / SheetJS CE)
+has known unfixed high-severity security vulnerabilities (prototype pollution, ReDoS —
+GHSA-4r6h-8v6p-xvw6 and GHSA-5pgg-2g8v-p4x9). Alternative libraries (e.g. `exceljs`)
+exist and could be evaluated, but were not implemented to keep this release focused on the
+mandatory deliverables. The JSON fixture workflow is unaffected. `npm audit --omit=dev`
+reports 0 vulnerabilities.
+
+---
+
 ## Known Limitations
 
 - **SAP is simulated.** `src/sap/mock.ts` writes to local files; no real RFC or OData connection is made. `SOLUTION.md` section 6 describes the real integration design.
 - **File-backed persistence is single-process.** `orders.jsonl` and `control.csv` are plain files; a multi-process or multi-server deployment would require a database or distributed lock.
 - **Live LLM testing requires reviewer credentials and credits.** The 7 skipped tests in `tests/integration/live-*.ts` require `RUN_LIVE_LLM_TESTS=true` and a funded API key. All other tests are deterministic and require no key.
-- **Approval evidence is plain text only (P0).** A PDF version (`approval.pdf`) is an optional P1 deliverable and is not included.
-- **No deployment URL.** Local execution is required for demo purposes (–10 points per PRD section 9.3).
+- **Live LLM flow has not been end-to-end tested against a real provider.** Insufficient API credits prevented a funded live run. All deterministic paths (tools, validation, SAP mock) are fully tested. The 7 skipped tests in `tests/integration/live-*.ts` and `tests/llm/` cover the live-provider path and require a funded key plus `RUN_LIVE_LLM_TESTS=true`.
+- **Hosted application limitations.** The service at `https://sap-purchase-orders.onrender.com/` is deployed on Render Free. Real LLM chat requires the reviewer to configure their own API key via the Render Dashboard (see Deployment section). Without credentials, `GET /api/health` returns `llmConfigured: false` and `/api/chat` returns HTTP 503. Render Free storage is ephemeral — output files are lost on instance restart.

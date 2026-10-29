@@ -46,6 +46,7 @@ import {
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import * as crypto from "node:crypto"
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib"
 
 // ── Tool context ───────────────────────────────────────────────────────────────
 
@@ -376,6 +377,102 @@ export const validate = {
   },
 }
 
+// ── PDF evidence helper ────────────────────────────────────────────────────────
+
+/**
+ * Generates approval.pdf with the same content as approval.txt.
+ * Returns the relative path on success, or null if generation fails (non-fatal —
+ * approval.txt is the mandatory P0 artifact; PDF is optional P1).
+ */
+async function generateApprovalPdf(
+  caseOutDir: string,
+  fields: { from: string; to: string; date: string; subject: string; body: string },
+  sha256: string,
+  projectRoot: string,
+): Promise<string | null> {
+  try {
+    const doc = await PDFDocument.create()
+    const font = await doc.embedFont(StandardFonts.Helvetica)
+    const boldFont = await doc.embedFont(StandardFonts.HelveticaBold)
+
+    const PAGE_WIDTH = 595  // A4 points
+    const PAGE_HEIGHT = 842
+    const MARGIN = 50
+    const LINE_HEIGHT = 14
+    const MAX_LINE_WIDTH = PAGE_WIDTH - MARGIN * 2
+
+    let page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT])
+    let y = PAGE_HEIGHT - MARGIN
+
+    function newPage(): void {
+      page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT])
+      y = PAGE_HEIGHT - MARGIN
+    }
+
+    function drawText(text: string, bold: boolean, size: number): void {
+      const usedFont = bold ? boldFont : font
+      const maxChars = Math.floor(MAX_LINE_WIDTH / (size * 0.55))
+      const words = text.split(" ")
+      let line = ""
+      for (const word of words) {
+        const candidate = line ? `${line} ${word}` : word
+        if (candidate.length > maxChars && line) {
+          if (y < MARGIN + LINE_HEIGHT) newPage()
+          page.drawText(line, { x: MARGIN, y, font: usedFont, size, color: rgb(0, 0, 0) })
+          y -= LINE_HEIGHT
+          line = word
+        } else {
+          line = candidate
+        }
+      }
+      if (line) {
+        if (y < MARGIN + LINE_HEIGHT) newPage()
+        page.drawText(line, { x: MARGIN, y, font: usedFont, size, color: rgb(0, 0, 0) })
+        y -= LINE_HEIGHT
+      }
+    }
+
+    // Title
+    drawText("Approval Evidence", true, 16)
+    y -= 8
+
+    // Headers
+    for (const [label, value] of [
+      ["From", fields.from],
+      ["To", fields.to],
+      ["Date", fields.date],
+      ["Subject", fields.subject],
+    ] as [string, string][]) {
+      if (y < MARGIN + LINE_HEIGHT) newPage()
+      page.drawText(`${label}:`, { x: MARGIN, y, font: boldFont, size: 11, color: rgb(0, 0, 0) })
+      page.drawText(` ${value}`, { x: MARGIN + boldFont.widthOfTextAtSize(`${label}:`, 11), y, font, size: 11, color: rgb(0, 0, 0) })
+      y -= LINE_HEIGHT
+    }
+
+    y -= 8
+    // Body
+    for (const line of fields.body.split("\n")) {
+      drawText(line || " ", false, 10)
+    }
+
+    y -= 8
+    // Divider line
+    if (y < MARGIN + LINE_HEIGHT) newPage()
+    page.drawLine({ start: { x: MARGIN, y }, end: { x: PAGE_WIDTH - MARGIN, y }, thickness: 0.5, color: rgb(0.5, 0.5, 0.5) })
+    y -= LINE_HEIGHT
+
+    // SHA-256
+    drawText(`SHA256: ${sha256}`, false, 8)
+
+    const pdfBytes = await doc.save()
+    const pdfPath = path.join(caseOutDir, "approval.pdf")
+    await fs.writeFile(pdfPath, pdfBytes)
+    return path.relative(projectRoot, pdfPath)
+  } catch {
+    return null
+  }
+}
+
 // ── po_generate_evidence ───────────────────────────────────────────────────────
 
 export const generate_evidence = {
@@ -443,7 +540,16 @@ export const generate_evidence = {
       )
 
       const relPath = path.relative(ctx.directory, outPath)
-      return serialize(ok({ path: relPath, sha256 }))
+
+      // P1: generate approval.pdf (non-fatal — approval.txt SHA remains canonical)
+      const pdfRelPath = await generateApprovalPdf(
+        caseOutDir,
+        { from, to, date, subject, body },
+        sha256,
+        ctx.directory,
+      )
+
+      return serialize(ok({ path: relPath, sha256, pdf_path: pdfRelPath ?? undefined }))
     } catch (e) {
       return serialize(err(e instanceof Error ? e.message : "unknown error"))
     }
