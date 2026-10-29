@@ -33,17 +33,23 @@ import { ok, err } from "../domain/schemas.js"
 import type { ConfirmationStore } from "../domain/confirmation.js"
 import { InMemoryConfirmationStore } from "../domain/confirmation.js"
 import type { SapAdapter } from "../sap/adapter.js"
-import { FileSapMock } from "../sap/mock.js"
+import { FileSapMock, PayloadConflictError } from "../sap/mock.js"
 import { runAllRules } from "../domain/rules.js"
 import { normalizeNit, normalizeName, parseQuoteTotal, parseQuoteRef, parseQuoteSupplierNit, parseQuoteValidUntil, parseInvoiceDate, parseInvoiceTotal, parseInvoiceNumber } from "../domain/normalize.js"
-import { buildPayload, buildSources, writeTraceability } from "../domain/payload.js"
+import {
+  buildPayload,
+  buildSources,
+  canonicalPurchaseOrder,
+  hashPurchaseOrder,
+  writeTraceability,
+} from "../domain/payload.js"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import * as crypto from "node:crypto"
 
 // ── Tool context ───────────────────────────────────────────────────────────────
 
-type ToolCtx = {
+export type ToolCtx = {
   directory: string
   sessionId: string
   outDir?: string
@@ -82,6 +88,27 @@ async function loadMasterData(fixturesRoot: string): Promise<MasterData> {
   })
 }
 
+async function readRequiredJson(
+  caseDir: string,
+  fileName: "email.json" | "request.json",
+): Promise<unknown> {
+  let text: string
+  try {
+    text = await fs.readFile(path.join(caseDir, fileName), "utf-8")
+  } catch (error) {
+    const code = error instanceof Error && "code" in error
+      ? String(error.code)
+      : ""
+    if (code === "ENOENT") throw new Error(`missing ${fileName}`)
+    throw new Error(`unable to read ${fileName}`)
+  }
+  try {
+    return JSON.parse(text) as unknown
+  } catch {
+    throw new Error(`malformed ${fileName}`)
+  }
+}
+
 function resolveSupplier(
   request: Pick<Package["request"], "supplier_name" | "supplier_tax_id">,
   suppliers: Supplier[],
@@ -114,7 +141,11 @@ async function readPackageFromFixture(
   }
 
   // email.json (required)
-  const emailRaw = JSON.parse(await fs.readFile(path.join(caseDir, "email.json"), "utf-8")) as Record<string, unknown>
+  const emailValue = await readRequiredJson(caseDir, "email.json")
+  if (emailValue === null || typeof emailValue !== "object" || Array.isArray(emailValue)) {
+    throw new Error("malformed email.json")
+  }
+  const emailRaw = emailValue as Record<string, unknown>
   const email = EmailSchema.parse({
     id: emailRaw["id"],
     from: emailRaw["from"],
@@ -123,9 +154,7 @@ async function readPackageFromFixture(
   })
 
   // request.json (required)
-  const request = RequestSchema.parse(
-    JSON.parse(await fs.readFile(path.join(caseDir, "request.json"), "utf-8")),
-  )
+  const request = RequestSchema.parse(await readRequiredJson(caseDir, "request.json"))
 
   // approval.json (optional)
   let approval = null
@@ -197,23 +226,15 @@ async function readPackageFromFixture(
 
 // ── Deterministic payload hash (used by ConfirmationStore) ────────────────────
 
-// This hash is computed from the validation result + request_id. It is computed
-// independently by po_validate (setPending) and po_create (check). If the fixture
-// data changes between calls, the hash changes and prior confirmations are invalid.
-function computeValidationHash(
-  requestId: string,
-  result: ValidationResult,
-): string {
-  const key = {
-    requestId,
-    blockers: result.blockers.map((b) => b.code).sort(),
-    confirmations: result.confirmations.map((c) => c.code).sort(),
-    retroactive: result.retroactive,
-  }
-  return crypto
-    .createHash("sha256")
-    .update(JSON.stringify(key), "utf-8")
-    .digest("hex")
+/** Hash of the final authoritative payload, including its evidence digest. */
+async function readEvidenceSha(outDir: string, caseId: string): Promise<string> {
+  const approvalTxt = await fs.readFile(
+    path.join(outDir, caseId, "approval.txt"),
+    "utf-8",
+  )
+  const shaMatch = approvalTxt.match(/^SHA256:\s*([a-f0-9]{64})$/m)
+  if (!shaMatch?.[1]) throw new Error("SHA256 line not found in approval.txt")
+  return shaMatch[1]
 }
 
 // ── Audit logging ──────────────────────────────────────────────────────────────
@@ -305,7 +326,7 @@ export const validate = {
       .string()
       .describe("Case folder name, e.g. 'req-001'"),
     package: z
-      .record(z.unknown())
+      .record(z.string(), z.unknown())
       .describe("Normalized package returned by po_read_package"),
   },
   async execute(
@@ -324,13 +345,6 @@ export const validate = {
       const masterData = await loadMasterData(fixturesRoot)
       const result = runAllRules(pkg, masterData)
 
-      // Bind confirmation to a deterministic hash if confirmations are required
-      if (result.confirmations.length > 0 && ctx.confirmationStore) {
-        const hash = computeValidationHash(pkg.request.request_id, result)
-        const codes = result.confirmations.map((c) => c.code)
-        ctx.confirmationStore.setPending(pkg.request.request_id, hash, codes)
-      }
-
       // Write VALIDATION row to control.csv
       await appendControlCsv(outDir, {
         request_id: pkg.request.request_id,
@@ -341,6 +355,19 @@ export const validate = {
         confirmations: result.confirmations.map((c) => c.code).join("|"),
         ts: new Date().toISOString(),
       })
+
+      // Write BLOCKED row immediately so the outcome is recorded even when po_create is never called
+      if (!result.eligible) {
+        await appendControlCsv(outDir, {
+          request_id: pkg.request.request_id,
+          result: "BLOCKED",
+          po_number: "",
+          retroactive: result.retroactive,
+          blockers: result.blockers.map((b) => b.code).join("|"),
+          confirmations: "",
+          ts: new Date().toISOString(),
+        })
+      }
 
       return serialize(ok(result))
     } catch (e) {
@@ -433,10 +460,10 @@ export const build_payload = {
       .string()
       .describe("Case folder name, e.g. 'req-001'"),
     package: z
-      .record(z.unknown())
+      .record(z.string(), z.unknown())
       .describe("Normalized package returned by po_read_package"),
     derived: z
-      .record(z.unknown())
+      .record(z.string(), z.unknown())
       .describe("Derived values from po_validate (tax_code, payment_terms)"),
   },
   async execute(
@@ -460,13 +487,9 @@ export const build_payload = {
       const validationResult = runAllRules(pkg, masterData)
 
       // Read evidence SHA from previously generated approval.txt
-      const approvalTxtPath = path.join(outDir, args.case_id, "approval.txt")
       let evidenceSha256: string
       try {
-        const approvalTxt = await fs.readFile(approvalTxtPath, "utf-8")
-        const shaMatch = approvalTxt.match(/^SHA256:\s*([a-f0-9]{64})$/m)
-        if (!shaMatch?.[1]) throw new Error("SHA256 line not found in approval.txt")
-        evidenceSha256 = shaMatch[1]
+        evidenceSha256 = await readEvidenceSha(outDir, args.case_id)
       } catch (e) {
         return serialize(
           err(
@@ -482,7 +505,13 @@ export const build_payload = {
 
       let payload: PurchaseOrder
       try {
-        payload = buildPayload(pkg, validationResult, evidenceSha256, supplierRecord)
+        payload = buildPayload(
+          pkg,
+          validationResult,
+          evidenceSha256,
+          supplierRecord,
+          null,
+        )
       } catch (e) {
         return serialize(
           err(
@@ -493,6 +522,35 @@ export const build_payload = {
 
       const sources = buildSources(pkg, validationResult)
       const tracePath = await writeTraceability(outDir, args.case_id, payload, sources)
+
+      // A confirmation becomes pending only after evidence generation and final
+      // authoritative payload construction. The authorization is therefore bound
+      // to the exact payload that po_create will reconstruct and persist.
+      if (validationResult.confirmations.length > 0 && ctx.confirmationStore) {
+        const payloadHash = hashPurchaseOrder(payload)
+        const priorStatus = ctx.confirmationStore.check(
+          pkg.request.request_id,
+          payloadHash,
+        )
+        if (priorStatus === "none" || priorStatus === "expired") {
+          ctx.confirmationStore.setPending(
+            pkg.request.request_id,
+            payloadHash,
+            validationResult.confirmations.map((confirmation) => confirmation.code),
+          )
+          await appendControlCsv(outDir, {
+            request_id: pkg.request.request_id,
+            result: "PENDING",
+            po_number: "",
+            retroactive: validationResult.retroactive,
+            blockers: "",
+            confirmations: validationResult.confirmations
+              .map((confirmation) => confirmation.code)
+              .join("|"),
+            ts: new Date().toISOString(),
+          })
+        }
+      }
 
       return serialize(ok({ payload, traceability_path: tracePath }))
     } catch (e) {
@@ -537,7 +595,6 @@ export const create = {
       const validationResult = runAllRules(pkg, masterData)
 
       const requestId = pkg.request.request_id
-      const hash = computeValidationHash(requestId, validationResult)
 
       // Blockers take absolute priority
       if (!validationResult.eligible) {
@@ -556,16 +613,61 @@ export const create = {
         return serialize(err(`PO creation blocked: ${msgs}`))
       }
 
-      // Resolve supplier and SAP adapter early (needed for idempotency check below)
-      const supplierRecordEarly = resolveSupplier(
-        pkg.request,
-        masterData.suppliers,
-      )
-      if (!supplierRecordEarly) {
+      const supplierRecord = resolveSupplier(pkg.request, masterData.suppliers)
+      if (!supplierRecord) {
         return serialize(err("Supplier not found in master data"))
       }
 
-      const sapEarly: SapAdapter =
+      let evidenceSha256: string
+      try {
+        evidenceSha256 = await readEvidenceSha(outDir, _args.case_id)
+      } catch (e) {
+        return serialize(
+          err(
+            `Approval evidence not found: ${e instanceof Error ? e.message : "unknown"} — call po_generate_evidence first`,
+          ),
+        )
+      }
+
+      let proposedPayload: PurchaseOrder
+      try {
+        proposedPayload = buildPayload(
+          pkg,
+          validationResult,
+          evidenceSha256,
+          supplierRecord,
+          null,
+        )
+      } catch (e) {
+        return serialize(
+          err(
+            `Payload construction failed: ${e instanceof Error ? e.message : "unknown"}`,
+          ),
+        )
+      }
+
+      if (
+        canonicalPurchaseOrder(_args.payload) !==
+        canonicalPurchaseOrder(proposedPayload)
+      ) {
+        return serialize(
+          err(
+            "payload mismatch: the supplied payload differs from the authoritative proposal; rebuild and review the PO before creating it",
+          ),
+        )
+      }
+
+      const payloadHash = hashPurchaseOrder(proposedPayload)
+      const authoritativePayload = validationResult.confirmations.length > 0
+        ? buildPayload(
+            pkg,
+            validationResult,
+            evidenceSha256,
+            supplierRecord,
+            "administrative-analyst",
+          )
+        : proposedPayload
+      const sap: SapAdapter =
         ctx.sapAdapter ??
         new FileSapMock(
           outDir,
@@ -576,14 +678,28 @@ export const create = {
           })),
         )
 
-      // Idempotency check BEFORE confirmation gate — if the PO already exists,
-      // return it regardless of confirmation state (creation already happened).
-      const earlyExisting = await sapEarly.findOrderByReference(requestId)
-      if (earlyExisting !== null) {
+      // An already-created order is returned idempotently, but createOrder still
+      // receives the authoritative payload so FileSapMock can reject a canonical
+      // payload conflict instead of silently accepting a reused request_id.
+      const existing = await sap.findOrderByReference(requestId)
+      if (existing !== null) {
+        let persisted: { po_number: string; date: string }
+        try {
+          persisted = await sap.createOrder(authoritativePayload)
+        } catch (e) {
+          if (e instanceof PayloadConflictError) {
+            return serialize(
+              err(
+                `conflict: request_id already exists with different payload (PO ${e.existingPoNumber})`,
+              ),
+            )
+          }
+          throw e
+        }
         await appendControlCsv(outDir, {
           request_id: requestId,
           result: "IDEMPOTENT",
-          po_number: earlyExisting.po_number,
+          po_number: persisted.po_number,
           retroactive: validationResult.retroactive,
           blockers: "",
           confirmations: validationResult.confirmations
@@ -593,8 +709,8 @@ export const create = {
         })
         return serialize(
           ok({
-            po_number: earlyExisting.po_number,
-            date: new Date().toISOString().slice(0, 10),
+            po_number: persisted.po_number,
+            date: persisted.date,
             idempotent: true,
           }),
         )
@@ -604,27 +720,27 @@ export const create = {
       if (validationResult.confirmations.length > 0) {
         const confirmationStore =
           ctx.confirmationStore ?? new InMemoryConfirmationStore()
-        const status = confirmationStore.check(requestId, hash)
+        const status = confirmationStore.check(requestId, payloadHash)
 
         if (status !== "confirmed") {
-          if (status === "none") {
+          if (status === "none" || status === "expired") {
             confirmationStore.setPending(
               requestId,
-              hash,
+              payloadHash,
               validationResult.confirmations.map((c) => c.code),
             )
+            await appendControlCsv(outDir, {
+              request_id: requestId,
+              result: "PENDING",
+              po_number: "",
+              retroactive: validationResult.retroactive,
+              blockers: "",
+              confirmations: validationResult.confirmations
+                .map((c) => c.code)
+                .join("|"),
+              ts: new Date().toISOString(),
+            })
           }
-          await appendControlCsv(outDir, {
-            request_id: requestId,
-            result: "PENDING",
-            po_number: "",
-            retroactive: validationResult.retroactive,
-            blockers: "",
-            confirmations: validationResult.confirmations
-              .map((c) => c.code)
-              .join("|"),
-            ts: new Date().toISOString(),
-          })
           if (status === "consumed") {
             return serialize(
               err("Confirmation already used. Request a new confirmation."),
@@ -641,60 +757,47 @@ export const create = {
             ),
           )
         }
-
-        // Confirmed — consume (single-use enforcement)
-        confirmationStore.consume(requestId, hash)
       }
 
-      // Read evidence SHA from approval.txt (must have been generated already)
-      const approvalTxtPath = path.join(outDir, _args.case_id, "approval.txt")
-      let evidenceSha256: string
+      let persisted: { po_number: string; date: string }
       try {
-        const approvalTxt = await fs.readFile(approvalTxtPath, "utf-8")
-        const shaMatch = approvalTxt.match(/^SHA256:\s*([a-f0-9]{64})$/m)
-        if (!shaMatch?.[1]) throw new Error("SHA256 line not found in approval.txt")
-        evidenceSha256 = shaMatch[1]
+        persisted = await sap.createOrder(authoritativePayload)
       } catch (e) {
-        return serialize(
-          err(
-            `Approval evidence not found: ${e instanceof Error ? e.message : "unknown"} — call po_generate_evidence first`,
-          ),
-        )
+        if (e instanceof PayloadConflictError) {
+          return serialize(
+            err(
+              `conflict: request_id already exists with different payload (PO ${e.existingPoNumber})`,
+            ),
+          )
+        }
+        throw e
       }
 
-      // Reconstruct authoritative payload from fixture data
-      let reconstructedPayload: PurchaseOrder
-      try {
-        reconstructedPayload = buildPayload(
-          pkg,
-          validationResult,
-          evidenceSha256,
-          supplierRecordEarly,
-        )
-      } catch (e) {
-        return serialize(
-          err(
-            `Payload construction failed: ${e instanceof Error ? e.message : "unknown"}`,
-          ),
-        )
+      // Consume only after durable persistence succeeds. Provider/tool retries can
+      // safely reuse a confirmed authorization after a transient SAP failure.
+      if (validationResult.confirmations.length > 0 && ctx.confirmationStore) {
+        ctx.confirmationStore.consume(requestId, payloadHash)
       }
-
-      const { po_number, date } = await sapEarly.createOrder(reconstructedPayload)
-      const idempotent = false // early idempotency check already handled above
 
       await appendControlCsv(outDir, {
         request_id: requestId,
-        result: idempotent ? "IDEMPOTENT" : "CREATED",
-        po_number,
+        result: "CREATED",
+        po_number: persisted.po_number,
         retroactive: validationResult.retroactive,
         blockers: "",
         confirmations: validationResult.confirmations
-          .map((c) => c.code)
+          .map((confirmation) => confirmation.code)
           .join("|"),
         ts: new Date().toISOString(),
       })
 
-      return serialize(ok({ po_number, date, idempotent }))
+      return serialize(
+        ok({
+          po_number: persisted.po_number,
+          date: persisted.date,
+          idempotent: false,
+        }),
+      )
     } catch (e) {
       return serialize(err(e instanceof Error ? e.message : "unknown error"))
     }

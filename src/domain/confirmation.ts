@@ -13,7 +13,8 @@ export interface ConfirmationStore {
    * Record that a PO creation for requestId requires human confirmation.
    * payloadHash is computed server-side over the authoritative payload;
    * the model never sets or controls it.
-   * Calling this again for the same requestId invalidates any prior state.
+   * A different hash invalidates prior state. Replaying the same hash is
+   * idempotent and cannot revoke or resurrect an authorization.
    */
   setPending(requestId: string, payloadHash: string, codes: string[]): void
 
@@ -43,6 +44,15 @@ export interface ConfirmationStore {
    * No-op if the entry doesn't exist or hash doesn't match.
    */
   consume(requestId: string, payloadHash: string): void
+
+  /** Return all currently pending confirmations in this session. */
+  getPending(): PendingConfirmation[]
+}
+
+export interface PendingConfirmation {
+  requestId: string
+  payloadHash: string
+  codes: string[]
 }
 
 const DEFAULT_TTL_MS = 30 * 60 * 1000 // 30 minutes
@@ -63,6 +73,16 @@ export class InMemoryConfirmationStore implements ConfirmationStore {
   }
 
   setPending(requestId: string, payloadHash: string, codes: string[]): void {
+    const existing = this.entries.get(requestId)
+    if (
+      existing !== undefined &&
+      existing.payloadHash === payloadHash &&
+      !this.isExpired(existing)
+    ) {
+      // Replaying the same build must not revoke an approval or make a consumed
+      // authorization reusable.
+      return
+    }
     this.entries.set(requestId, {
       payloadHash,
       codes,
@@ -112,6 +132,20 @@ export class InMemoryConfirmationStore implements ConfirmationStore {
     const entry = this.entries.get(requestId)
     if (entry === undefined || entry.payloadHash !== payloadHash) return
     entry.status = "consumed"
+  }
+
+  getPending(): PendingConfirmation[] {
+    const pending: PendingConfirmation[] = []
+    for (const [requestId, entry] of this.entries) {
+      if (entry.status === "pending" && !this.isExpired(entry)) {
+        pending.push({
+          requestId,
+          payloadHash: entry.payloadHash,
+          codes: [...entry.codes],
+        })
+      }
+    }
+    return pending
   }
 
   /** Returns the RC codes that required confirmation for a given request. */

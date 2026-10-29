@@ -3,9 +3,40 @@ import { PurchaseOrderSchema } from "./schemas.js"
 import { parseQuoteRef } from "./normalize.js"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
+import * as crypto from "node:crypto"
 
 export interface TraceabilitySources {
   [field: string]: string
+}
+
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalValue)
+  if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>
+    return Object.fromEntries(
+      Object.keys(record)
+        .sort()
+        .map((key) => [key, canonicalValue(record[key])]),
+    )
+  }
+  return value
+}
+
+/**
+ * Canonical representation of every PRD-defined PurchaseOrder field.
+ * Zod strips unknown properties first, then keys are recursively sorted so
+ * object insertion order cannot affect idempotency conflict detection.
+ */
+export function canonicalPurchaseOrder(order: PurchaseOrder): string {
+  const parsed = PurchaseOrderSchema.parse(order)
+  return JSON.stringify(canonicalValue(parsed))
+}
+
+export function hashPurchaseOrder(order: PurchaseOrder): string {
+  return crypto
+    .createHash("sha256")
+    .update(canonicalPurchaseOrder(order), "utf-8")
+    .digest("hex")
 }
 
 /** Detects SAP unit of measure from description text. */
@@ -23,6 +54,7 @@ export function buildPayload(
   validationResult: ValidationResult,
   evidenceSha256: string,
   supplierRecord: Supplier,
+  confirmedBy: string | null = null,
 ): PurchaseOrder {
   const quoteRef = pkg.quote != null ? parseQuoteRef(pkg.quote.text) : null
   const taxCode =
@@ -33,7 +65,7 @@ export function buildPayload(
   const exceptions = validationResult.confirmations.map((c) => ({
     code: c.code,
     detail: c.message,
-    confirmed_by: pkg.approval?.from ?? null,
+    confirmed_by: confirmedBy,
   }))
 
   const payload: PurchaseOrder = {
@@ -79,7 +111,7 @@ export function buildSources(
   pkg: Package,
   validationResult: ValidationResult,
 ): TraceabilitySources {
-  return {
+  const sources: TraceabilitySources = {
     "reference.request_id": "request",
     "reference.email_id": "email",
     "reference.quote_ref": pkg.quote !== null ? "quote" : "null",
@@ -108,6 +140,12 @@ export function buildSources(
         ? "derived:RC6"
         : "request",
   }
+  validationResult.confirmations.forEach((confirmation, index) => {
+    sources[`exceptions[${index}].code`] = `derived:${confirmation.code}`
+    sources[`exceptions[${index}].detail`] = `derived:${confirmation.code}`
+    sources[`exceptions[${index}].confirmed_by`] = "derived:human-confirmation"
+  })
+  return sources
 }
 
 /** Writes traceability.json for a case and returns a repo-relative path. */

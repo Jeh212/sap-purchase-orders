@@ -99,12 +99,12 @@ describe("InMemoryConfirmationStore — re-setPending invalidates prior state", 
     expect(store.check(REQ, HASH_B)).toBe("pending")
   })
 
-  it("new setPending with same hash resets status to pending", () => {
+  it("replaying setPending with the same hash preserves an existing confirmation", () => {
     const store = new InMemoryConfirmationStore()
     store.setPending(REQ, HASH_A, ["RC5"])
     store.confirm(REQ, HASH_A)
     store.setPending(REQ, HASH_A, ["RC5"])
-    expect(store.check(REQ, HASH_A)).toBe("pending")
+    expect(store.check(REQ, HASH_A)).toBe("confirmed")
   })
 })
 

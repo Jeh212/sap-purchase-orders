@@ -130,7 +130,7 @@ export type Blocker = z.infer<typeof BlockerSchema>
 export const ConfirmationItemSchema = z.object({
   code: z.string().describe("RC rule code, e.g. RC5"),
   message: z.string(),
-  values: z.record(z.unknown()).optional(),
+  values: z.record(z.string(), z.unknown()).optional(),
 })
 
 export type ConfirmationItem = z.infer<typeof ConfirmationItemSchema>

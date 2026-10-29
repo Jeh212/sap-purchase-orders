@@ -6,6 +6,9 @@ import * as po from "../../src/tools/po.js"
 import { InMemoryConfirmationStore } from "../../src/domain/confirmation.js"
 import { FileSapMock } from "../../src/sap/mock.js"
 import type { PurchaseOrder, ValidationResult } from "../../src/domain/schemas.js"
+import type { SapAdapter } from "../../src/sap/adapter.js"
+import { PayloadConflictError } from "../../src/sap/mock.js"
+import { hashPurchaseOrder } from "../../src/domain/payload.js"
 
 const CWD = process.cwd()
 
@@ -313,7 +316,7 @@ describe("req-004 — RC5 confirmation required (quote differs > 2%)", () => {
   beforeEach(async () => { ;[ctx, cleanup] = await makeCtx("session-004") })
   afterEach(() => cleanup())
 
-  it("validate returns confirmations:[RC5] and sets pending in store", async () => {
+  it("binds pending confirmation only after final evidence-backed payload construction", async () => {
     const r = parseResult<ValidationResult>(
       await po.validate.execute({ case_id: "req-004", package: {} }, ctx),
     )
@@ -321,9 +324,22 @@ describe("req-004 — RC5 confirmation required (quote differs > 2%)", () => {
     if (!r.ok) return
     expect(r.data.eligible).toBe(true)
     expect(r.data.confirmations.map((c) => c.code)).toContain("RC5")
-    // Store must have a pending hash
+    expect(ctx.confirmationStore.getStoredHash("REQ-2026-004")).toBeUndefined()
+
+    await po.generate_evidence.execute({ case_id: "req-004" }, ctx)
+    const buildR = parseResult<{ payload: PurchaseOrder }>(
+      await po.build_payload.execute(
+        { case_id: "req-004", package: {}, derived: {} },
+        ctx,
+      ),
+    )
+    if (!buildR.ok) throw new Error("build failed")
+
     const hash = ctx.confirmationStore.getStoredHash("REQ-2026-004")
-    expect(hash).toBeTruthy()
+    expect(hash).toBe(hashPurchaseOrder(buildR.data.payload))
+
+    const csv = await fs.readFile(path.join(ctx.outDir, "control.csv"), "utf-8")
+    expect(csv).toContain("PENDING")
   })
 
   it("create WITHOUT confirmation returns ok:false (PENDING) and logs PENDING", async () => {
@@ -619,6 +635,176 @@ describe("FileSapMock — counter repair", () => {
     } finally {
       await cleanup2()
     }
+  })
+})
+
+// ── Regression: consume-after-write-failure ────────────────────────────────────
+
+describe("regression: consume() is called AFTER successful persistence", () => {
+  let ctx: TestCtx
+  let cleanup: () => Promise<void>
+
+  beforeEach(async () => { ;[ctx, cleanup] = await makeCtx("session-consume-regress") })
+  afterEach(() => cleanup())
+
+  it("if SAP write throws, confirmation remains available for retry", async () => {
+    // Set up a failing SAP adapter
+    let callCount = 0
+    const failingAdapter: SapAdapter = {
+      createOrder: async () => {
+        callCount++
+        if (callCount === 1) throw new Error("simulated SAP write failure")
+        return { po_number: "4500000001", date: "2026-01-01" }
+      },
+      lookupSupplier: (tax_id: string) => ctx.sapAdapter.lookupSupplier(tax_id),
+      findOrderByReference: () => Promise.resolve(null),
+    }
+    const failCtx = { ...ctx, sapAdapter: failingAdapter }
+
+    await po.validate.execute({ case_id: "req-004", package: {} }, failCtx)
+    await po.generate_evidence.execute({ case_id: "req-004" }, failCtx)
+    await po.build_payload.execute({ case_id: "req-004", package: {}, derived: {} }, failCtx)
+
+    const hash = ctx.confirmationStore.getStoredHash("REQ-2026-004")!
+    ctx.confirmationStore.confirm("REQ-2026-004", hash)
+
+    // First create — SAP write fails
+    const r1 = parseResult<unknown>(
+      await po.create.execute({ case_id: "req-004", payload: MINIMAL_PO }, failCtx),
+    )
+    expect(r1.ok).toBe(false) // first attempt fails
+
+    // Confirmation must still be in 'confirmed' state (not consumed) so a retry is possible
+    const statusAfterFailure = ctx.confirmationStore.check("REQ-2026-004", hash)
+    expect(statusAfterFailure).toBe("confirmed")
+  })
+})
+
+// ── Regression: BLOCKED logged via po_validate ────────────────────────────────
+
+describe("regression: BLOCKED row written by po_validate, not only by po_create", () => {
+  it("req-002 (RC1 blocked) — BLOCKED row in control.csv after validate, no po_create called", async () => {
+    const [ctx2, cleanup2] = await makeCtx("session-blocked-csv")
+    try {
+      const r = parseResult<ValidationResult>(
+        await po.validate.execute({ case_id: "req-002", package: {} }, ctx2),
+      )
+      expect(r.ok).toBe(true)
+      if (!r.ok) return
+      expect(r.data.eligible).toBe(false)
+
+      const csv = await fs.readFile(path.join(ctx2.outDir, "control.csv"), "utf-8")
+      expect(csv).toContain("BLOCKED")
+      expect(csv).toContain("RC1")
+    } finally {
+      await cleanup2()
+    }
+  })
+})
+
+// ── Regression: payload conflict detection ────────────────────────────────────
+
+describe("regression: same request_id with different payload returns conflict error", () => {
+  let ctx: TestCtx
+  let cleanup: () => Promise<void>
+
+  beforeEach(async () => { ;[ctx, cleanup] = await makeCtx("session-conflict") })
+  afterEach(() => cleanup())
+
+  it("FileSapMock.createOrder throws PayloadConflictError when same request_id has different supplier", async () => {
+    await po.generate_evidence.execute({ case_id: "req-001" }, ctx)
+    const buildR = parseResult<{ payload: PurchaseOrder }>(
+      await po.build_payload.execute({ case_id: "req-001", package: {}, derived: {} }, ctx),
+    )
+    if (!buildR.ok) throw new Error("build failed")
+
+    // First create — succeeds
+    await po.create.execute({ case_id: "req-001", payload: buildR.data.payload }, ctx)
+
+    // Second create — tamper with supplier tax_id to simulate conflicting payload
+    const tampered = {
+      ...buildR.data.payload,
+      supplier: { ...buildR.data.payload.supplier, tax_id: "DIFFERENT-TAX-ID" },
+    }
+    await expect(
+      ctx.sapAdapter.createOrder(tampered),
+    ).rejects.toBeInstanceOf(PayloadConflictError)
+  })
+
+  it("canonical comparison detects conflicts in every payload section, not only financial fields", async () => {
+    await po.generate_evidence.execute({ case_id: "req-001" }, ctx)
+    const buildR = parseResult<{ payload: PurchaseOrder }>(
+      await po.build_payload.execute({ case_id: "req-001", package: {}, derived: {} }, ctx),
+    )
+    if (!buildR.ok) throw new Error("build failed")
+    await ctx.sapAdapter.createOrder(buildR.data.payload)
+
+    const mutations: PurchaseOrder[] = [
+      { ...buildR.data.payload, payment_terms: "Z060" },
+      {
+        ...buildR.data.payload,
+        reference: { ...buildR.data.payload.reference, quote_ref: "QUOTE OTHER" },
+      },
+      {
+        ...buildR.data.payload,
+        approver: {
+          ...buildR.data.payload.approver,
+          evidence_sha256: "b".repeat(64),
+        },
+      },
+      {
+        ...buildR.data.payload,
+        items: buildR.data.payload.items.map((item) => ({
+          ...item,
+          description: "Different description",
+        })),
+      },
+      {
+        ...buildR.data.payload,
+        items: buildR.data.payload.items.map((item) => ({
+          ...item,
+          tax_code: "C2",
+        })),
+      },
+      {
+        ...buildR.data.payload,
+        exceptions: [{ code: "RC5", detail: "Different", confirmed_by: "session:x" }],
+      },
+    ]
+
+    for (const mutation of mutations) {
+      await expect(ctx.sapAdapter.createOrder(mutation)).rejects.toBeInstanceOf(
+        PayloadConflictError,
+      )
+    }
+  })
+
+  it("po_create returns ok:false with conflict message when payload conflicts", async () => {
+    await po.generate_evidence.execute({ case_id: "req-001" }, ctx)
+    const buildR = parseResult<{ payload: PurchaseOrder }>(
+      await po.build_payload.execute({ case_id: "req-001", package: {}, derived: {} }, ctx),
+    )
+    if (!buildR.ok) throw new Error("build failed")
+
+    // First create — succeeds
+    await po.create.execute({ case_id: "req-001", payload: buildR.data.payload }, ctx)
+
+    // Inject a conflicting adapter for the second call
+    const conflictAdapter: SapAdapter = {
+      createOrder: async (order) => {
+        throw new PayloadConflictError("4500000001", `request_id=${order.reference.request_id} already created PO 4500000001 with different financial data`)
+      },
+      lookupSupplier: (tax_id: string) => ctx.sapAdapter.lookupSupplier(tax_id),
+      findOrderByReference: () => Promise.resolve(null), // pretend PO doesn't exist yet to reach conflict
+    }
+    const conflictCtx = { ...ctx, sapAdapter: conflictAdapter }
+
+    const r = parseResult<unknown>(
+      await po.create.execute({ case_id: "req-001", payload: buildR.data.payload }, conflictCtx),
+    )
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error).toContain("conflict")
   })
 })
 
