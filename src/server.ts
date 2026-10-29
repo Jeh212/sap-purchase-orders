@@ -482,7 +482,14 @@ export async function buildServer(options: AgentServerOptions = {}) {
     fs.readFile(path.join(rootDir, "agent", "prompt.md"), "utf-8"),
     fs.readFile(path.join(rootDir, "src", "knowledge", "purchase-orders.md"), "utf-8"),
   ])
-  const adapter = options.adapter ?? createLlmAdapterFromEnv(process.env)
+  let adapter: LlmAdapter | null = options.adapter ?? null
+  if (adapter === null) {
+    try {
+      adapter = createLlmAdapterFromEnv(process.env)
+    } catch {
+      // Server starts without credentials; /api/chat returns HTTP 503 until configured.
+    }
+  }
   const sessions = new SessionStore(`${prompt}\n\n${knowledge}`)
   const sapAdapter = new FileSapMock(outDir)
   await sapAdapter.repairCounter()
@@ -502,8 +509,9 @@ export async function buildServer(options: AgentServerOptions = {}) {
 
   app.get("/api/health", async () => ({
     ok: true,
-    provider: adapter.provider,
-    model: adapter.model,
+    provider: adapter?.provider ?? "none",
+    model: adapter?.model ?? "none",
+    llmConfigured: adapter !== null,
   }))
 
   app.get<{ Params: { id: string } }>("/api/sessions/:id", async (request, reply) => {
@@ -520,6 +528,12 @@ export async function buildServer(options: AgentServerOptions = {}) {
   })
 
   app.post("/api/chat", async (request, reply): Promise<ChatResponse | unknown> => {
+    if (adapter === null) {
+      return reply.code(503).send({
+        ok: false,
+        error: "LLM provider not configured. Set LLM_PROVIDER, LLM_MODEL, and the corresponding API key environment variable.",
+      })
+    }
     const parsed = ChatRequestSchema.safeParse(request.body)
     if (!parsed.success) {
       return reply.code(400).send({ ok: false, error: formatZodError(parsed.error) })
@@ -561,7 +575,8 @@ export async function buildServer(options: AgentServerOptions = {}) {
       session.updatedAt = new Date().toISOString()
 
       const result = await runAgentTurn(
-        adapter,
+        // adapter is non-null: the null guard at the top of this handler returns early
+        adapter!,
         session,
         rootDir,
         outDir,

@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: sap-purchase-orders
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # LLM credentials — set these in the Render Dashboard before deploying.
+      # The server starts without them but the /api/chat endpoint returns HTTP 503
+      # until they are configured.
+      - key: LLM_PROVIDER
+        sync: false
+      - key: LLM_MODEL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false

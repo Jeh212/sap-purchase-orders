@@ -326,7 +326,7 @@ describe("agent-loop correlation, validation, limits and recovery", () => {
   it("health and session APIs expose provider/model/history without credentials", async () => {
     const h = await harness(new WorkflowAdapter("req-002"))
     const health = await h.app.inject({ method: "GET", url: "/api/health" })
-    expect(health.json()).toEqual({ ok: true, provider: "mock", model: "workflow-v1" })
+    expect(health.json()).toEqual({ ok: true, provider: "mock", model: "workflow-v1", llmConfigured: true })
     expect(health.body).not.toMatch(/api.?key|secret/i)
     await post(h.app, { sessionId: "history", message: "Process req-002" })
     const session = await h.app.inject({ method: "GET", url: "/api/sessions/history" })
