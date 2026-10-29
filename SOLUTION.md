@@ -185,7 +185,7 @@ SAP's standard Purchase Order OData v2 service is the most maintainable option b
 | US-1 Read package | Done | Real XLSX/PDF ingestion (P1); only JSON/TXT fixtures used |
 | US-2 Validate (RC1–RC10) | Done | — |
 | US-3 Build payload (with traceability) | Done | — |
-| US-4 Generate evidence | Done (P0 txt) | P1 PDF (`approval.pdf`); no production digital-signature requirement |
+| US-4 Generate evidence | Done (P0 txt + P1 pdf) | No production digital-signature requirement |
 | US-5 Create PO (idempotent, control log) | Done | Real SAP OData/BAPI integration |
 | US-6 Error handling | Done | — |
 | AL1 Iteration cap | Done | — |
@@ -246,6 +246,112 @@ path starts with the fixtures root before opening any file.
 
 ---
 
+## 11a. Phase 8 — Reusable Module, PDF Evidence, and Repository Cleanup
+
+### Phase 8-A: Reusable Agent Module (PRD 9.4 Bonus)
+
+The `module/` directory packages the agent for use by other agent platforms without depending on the Fastify HTTP server:
+
+```
+module/
+├── agent.md                        # YAML frontmatter (description, mode: primary, permission: edit/bash deny) + agent system prompt
+├── tools/po.ts                     # re-export of the five tools from src/tools/po.ts
+└── skill/purchase-orders/SKILL.md  # YAML frontmatter (name, description) + process knowledge
+```
+
+**Canonical sources and divergence prevention:**
+
+- `module/agent.md` body = `agent/prompt.md` (verified byte-for-byte)
+- `module/skill/purchase-orders/SKILL.md` body = `src/knowledge/purchase-orders.md` (verified byte-for-byte)
+- `module/tools/po.ts` re-exports from `src/tools/po.ts` — no duplication of business logic
+
+`npm run module:check` (implemented in `scripts/module-check.ts`) verifies both text files against their canonical sources and exits non-zero on divergence. CI/automated reviews should add this check.
+
+**Portability:** importing `module/tools/po.ts` initializes only Node.js built-ins and `zod`. No Fastify server, no LLM adapter, and no API key is loaded on import. The tools can be called directly with a `ToolCtx` containing `{ directory, sessionId }`.
+
+**Integration example:**
+```typescript
+import { read_package, validate } from "./module/tools/po.js"
+const result = JSON.parse(await read_package.execute({ case_id: "req-001" }, { directory: ROOT, sessionId: "s1" }))
+```
+
+**Security invariants preserved:** RC1–RC10 blockers, per-session confirmation state machine, server-side re-validation in `po_create`, and path traversal prevention are all in `src/tools/po.ts` and are therefore included via the re-export.
+
+### Phase 8-B: PDF Approval Evidence
+
+`po_generate_evidence` now produces two artifacts per eligible case:
+
+| Artifact | Type | Purpose | PRD Priority |
+|----------|------|---------|--------------|
+| `out/<case>/approval.txt` | Plain text | Canonical evidence + SHA-256 hash | P0 (unchanged) |
+| `out/<case>/approval.pdf` | PDF | Same email headers + body in PDF format | P1 (bonus) |
+
+**Implementation:** `pdf-lib` (pure TypeScript, no native dependencies, zero known CVEs). The PDF is generated inside `src/tools/po.ts` in a helper function `generateApprovalPdf()` that is non-fatal — a PDF generation failure does not affect `approval.txt` or the SHA-256. The `po_generate_evidence` tool result now includes an optional `pdf_path` field alongside the existing `path` and `sha256` fields.
+
+**SHA-256 semantics unchanged:** the hash is computed over `canonicalText` only (email headers + body), exactly as before. The `---\nSHA256:` trailer line is not part of the hashed content. Adding PDF generation does not touch this computation.
+
+**Trade-off:** `pdf-lib` is a runtime dependency (~350 kB), but it is pure TypeScript and introduces no native bindings, Chromium, or subprocess. The alternative (`pdfkit`) requires a binary font loader that breaks in serverless environments.
+
+### Phase 8-C: XLSX Ingestion (Deferred)
+
+The optional `po_read_excel` tool was evaluated and deferred due to a security risk.
+
+The only widely-used Node.js XLSX parsing package (`xlsx` / SheetJS CE) has two unfixed known security vulnerabilities:
+
+| Advisory | Severity | Status |
+|----------|----------|--------|
+| GHSA-4r6h-8v6p-xvw6 — Prototype Pollution | High | No fix available |
+| GHSA-5pgg-2g8v-p4x9 — ReDoS | High | No fix available |
+
+`npm audit --omit=dev` would report 1 high severity vulnerability after installing `xlsx`. No other maintained package with equivalent `.xlsx` parsing capability was available at implementation time.
+
+**Decision:** per AGENTS.md ("if any optional feature threatens mandatory functionality, prioritize preserving the working implementation") and the Phase 8-C instruction ("if implementing XLSX would require a high-risk architectural change, report that risk"), the feature was deferred. The JSON fixture workflow is unaffected.
+
+**Note:** SheetJS CE is not the only XLSX library. Alternatives include `exceljs` (no known CVEs at this time, but larger) and WASM-based parsers. They were evaluated and not implemented to keep this release focused on the mandatory and higher-priority Phase 8-A/B deliverables.
+
+### Local .env Loading
+
+`src/server.ts` loads `.env` using Node.js built-ins (`readFileSync` + a minimal line parser)
+at module initialization time, before `buildServer()` is called. This avoids adding a `dotenv`
+dependency while supporting the reviewer's local workflow.
+
+Key properties:
+- Uses `??=` semantics: never overwrites variables already set in the environment (Render Dashboard vars take priority)
+- Silently skips missing `.env` (try/catch on ENOENT)
+- Only runs in the server process — Vite frontend is a separate process and never sees server env vars
+- Works on Node.js 20+; no Node.js 22-specific flag required
+- Production behavior on Render is unchanged (`.env` does not exist there)
+
+**Verified:** server started with dummy `ANTHROPIC_API_KEY` in `.env` → `GET /api/health` returned `{"llmConfigured":true}`. Server started without `.env` → `{"llmConfigured":false}`. No real LLM call was made in either test.
+
+### Reusable Module — Portability Model
+
+The module is distributed as part of this repository. It is **not** a standalone npm package.
+
+**Distribution:** clone or copy the repository. After `npm install && npm run build`:
+- TypeScript source: import `module/tools/po.ts` with a TypeScript runner (`tsx`)
+- Compiled JS: import `dist/module/tools/po.js` with `node`
+
+The compiled module re-exports from `dist/src/tools/po.js`. It requires `dist/src/domain/*` and `dist/src/sap/*` to be present (they are part of the same repository build). Runtime package dependencies are `zod` and `pdf-lib` (declared in `package.json`).
+
+**Portability tests:** `tests/phase8/module-portability.test.ts` spawns 6 independent Node.js subprocesses from a temporary directory, each importing `dist/module/tools/po.js` and executing tools against real fixture data. All tests pass without Fastify or LLM credentials.
+
+### Repository Cleanup
+
+| Item | Change |
+|------|--------|
+| `src/server.ts` | Added inline `.env` loader (built-ins only, no dotenv dep) |
+| `tsconfig.build.json` | New: production-only TS config; compiles `src/**/*` + `module/**/*`, excludes tests, demo, scripts |
+| `package.json build:server` | Updated to use `tsconfig.build.json` instead of `tsconfig.json` |
+| `render.yaml buildCommand` | Updated to `npm ci --include=dev && npm run build` (ensures devDependencies are installed) |
+| `.gitignore` | Expanded: `.env.*` + `!.env.example`, `coverage/`, `test-results/`, `*.log`, `.DS_Store`, editor dirs |
+| `package.json module:check` | New script: `tsx scripts/module-check.ts` |
+| `scripts/module-check.ts` | New: validates module/agent.md and SKILL.md against canonical sources |
+| `module/` | New: reusable module directory (Phase 8-A) |
+| `tests/phase8/` | New: Phase 8 test suite (module + portability + PDF) |
+
+---
+
 ## 12. Testing and verification
 
 ### Test suite
@@ -260,16 +366,20 @@ path starts with the fixtures root before opening any file.
 | Frontend | `web/src/` (vitest + jsdom) | React components, ChatWindow, ConfirmationBanner, ToolCallCard |
 | Browser | `tests/browser-acceptance.ts` | Playwright end-to-end — all 6 cases, mobile viewport, screenshot |
 
-**Result (2026-10-29):**
+**Result (2026-10-29 — Phase 8):**
 
 ```
-Test Files  8 passed | 2 skipped (10)
-      Tests  259 passed | 7 skipped (266)
+Test Files  10 passed | 2 skipped (12)
+      Tests  282 passed | 7 skipped (289)
 ```
 
 Two skipped test *files* are the live-provider LLM integration tests (`tests/llm/`), which
 require a real API key and are explicitly skipped when no key is set. The 7 skipped individual
 tests are within those files. All other tests are deterministic and pass without any API key.
+
+Phase 8 added 23 new tests across two files:
+- `tests/phase8/module.test.ts` — 17 tests (Phase 8-A: module exports, Zod contracts, frontmatter, content consistency, standalone execution)
+- `tests/phase8/pdf-evidence.test.ts` — 6 tests (Phase 8-B: PDF generation, validity, SHA integrity)
 
 **Live LLM integration has not been end-to-end tested against a real provider.** Insufficient
 API credits prevented a funded run of `tests/integration/live-workflows.test.ts` or a real

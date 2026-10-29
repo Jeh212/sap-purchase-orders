@@ -16,6 +16,6 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*", "tests/**/*", "demo.ts"],
+  "include": ["src/**/*", "tests/**/*", "demo.ts", "module/**/*", "scripts/**/*"],
   "exclude": ["node_modules", "dist", "web", "tests/browser-acceptance.ts"]
 }

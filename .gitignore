@@ -1,5 +1,29 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+
+# Runtime artifacts
 out/
+
+# Environment files — keep .env.example, ignore everything else
 .env
+.env.*
+!.env.example
 *.local
+
+# Test artifacts
+coverage/
+test-results/
+
+# Logs
+*.log
+npm-debug.log*
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/settings.json
+.idea/
