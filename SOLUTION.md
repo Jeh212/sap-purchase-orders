@@ -396,38 +396,63 @@ npm run build   # compiles TypeScript + Vite → dist/
 npm start       # node dist/src/server.js on PORT (default 3000)
 ```
 
-### Fly.io (recommended)
+### Render Free (selected deployment platform)
 
-Fly.io free tier provides up to 3 VMs and a 1 GB persistent volume — required because the
-file-backed SAP mock (`orders.jsonl`, `control.csv`) must survive restarts. Render's free tier
-does not support persistent disks.
+The service is deployed as a single Render Free Web Service that runs the Fastify backend
+and serves the compiled React frontend as static files from `dist/web/`.
 
-**`fly.toml` excerpt:**
+**render.yaml** (committed to repository root):
 
-```toml
-[build]
-  [build.args]
-    NODE_VERSION = "20"
-
-[[mounts]]
-  source = "po_out"
-  destination = "/data/out"
-
-[env]
-  OUT_DIR = "/data/out"
-  PORT = "8080"
+```yaml
+services:
+  - type: web
+    name: sap-purchase-orders
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: LLM_PROVIDER
+        sync: false
+      - key: LLM_MODEL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
 ```
 
-**Deployment steps:**
+**Deployment steps (Render Dashboard):**
 
-```bash
-fly launch --no-deploy
-fly volumes create po_out --size 1 --region ord
-fly secrets set ANTHROPIC_API_KEY=sk-ant-...
-fly deploy
-```
+1. Go to [dashboard.render.com](https://dashboard.render.com) → **New** → **Web Service**.
+2. Connect the GitHub repository `Jeh212/sap-purchase-orders`.
+3. Select branch `main`.
+4. Render auto-detects `render.yaml`; confirm the settings shown.
+5. In **Environment Variables**, add:
+   - `LLM_PROVIDER` = `anthropic`
+   - `LLM_MODEL` = `claude-sonnet-5-5`
+   - `ANTHROPIC_API_KEY` = `<reviewer's key>`
+6. Click **Deploy**.
+7. Wait for the build to complete (~2 minutes) and visit the assigned `*.onrender.com` URL.
 
-The server serves the React build as static files from `dist/web/` in production.
+**Starting without a key (reviewer-configurable):**
+
+The service starts and serves the UI even if no API key is set. The health endpoint
+(`GET /api/health`) returns `{"ok":true,"llmConfigured":false}`. The `/api/chat` endpoint
+returns HTTP 503 with a human-readable error until `LLM_PROVIDER`, `LLM_MODEL`, and the
+corresponding key are set. The reviewer can add or update environment variables in the
+Render Dashboard under **Environment** without redeploying.
+
+**Ephemeral storage:**
+
+Render Free uses ephemeral storage. The SAP mock writes to `out/sap/orders.jsonl` and
+`out/sap/counter.txt` in the project directory. These paths are writable at runtime and the
+mock initializes from an empty directory on first use. Counter recovery (`repairCounter()`)
+rebuilds the PO counter from `orders.jsonl` on startup, so sequential PO numbers are
+consistent within a running instance. **All output files are lost when the instance restarts
+or the free-tier service sleeps.** This is acceptable for a demonstration; production deployments
+would need a database or persistent volume.
 
 **Live URL:** configured after deployment; update this line with the public URL before submission.
 
