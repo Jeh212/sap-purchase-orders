@@ -23,8 +23,8 @@ required only to run the real conversational agent.
 ## Installation
 
 ```bash
-git clone <repo-url>
-cd challenge-03
+git clone https://github.com/Jeh212/sap-purchase-orders.git
+cd sap-purchase-orders
 npm install
 ```
 
@@ -225,7 +225,7 @@ Browser acceptance: 6 passed, 0 failed (deterministic adapter)
 |--------|------|---------------|----------|
 | `POST` | `/api/chat` | `{ sessionId?: string, message: string, confirm?: boolean }` | `{ reply, toolCalls[], needsConfirmation, pendingConfirmation, tokenUsage, sessionId }` |
 | `GET` | `/api/sessions/:id` | — | Full event history, pending confirmation state, token usage |
-| `GET` | `/api/health` | — | `{ ok, provider, model }` — no API key material |
+| `GET` | `/api/health` | — | `{ ok, provider, model, llmConfigured }` — no API key material |
 
 To send a human confirmation after the agent pauses:
 
@@ -269,18 +269,29 @@ PORT=3000 LLM_PROVIDER=anthropic LLM_MODEL=claude-sonnet-5-5 \
   ANTHROPIC_API_KEY=sk-ant-... node dist/src/server.js
 ```
 
-### Fly.io (recommended cloud deployment)
+### Render Free (cloud deployment)
 
-Fly.io free tier provides persistent volumes required for the file-backed SAP mock.
+The service is configured for Render Free via `render.yaml` at the repository root.
 
-```bash
-fly auth login
-fly launch --no-deploy
-fly volumes create po_out --size 1 --region <region>
-fly secrets set ANTHROPIC_API_KEY=sk-ant-...
-fly secrets set OUT_DIR=/data/out
-fly deploy
-```
+**Steps (Render Dashboard):**
+
+1. Go to [dashboard.render.com](https://dashboard.render.com) → **New** → **Web Service**.
+2. Connect the repository `Jeh212/sap-purchase-orders`, branch `Jeh212/periferia-challenge-03-plan`.
+3. Render auto-detects `render.yaml`; confirm the settings.
+4. Under **Environment Variables**, add:
+   - `LLM_PROVIDER` = `anthropic`
+   - `LLM_MODEL` = `claude-sonnet-5-5`
+   - `ANTHROPIC_API_KEY` = `<your key>`
+5. Click **Deploy** (~2 min build).
+
+The server starts and serves the UI even without credentials. The `/api/chat` endpoint returns
+HTTP 503 until the key variables are set. The reviewer can add or update environment variables
+in the Dashboard under **Environment** without redeploying.
+
+**Storage note:** Render Free uses ephemeral storage. Output files (`out/sap/orders.jsonl`,
+`control.csv`) are written to the container filesystem and are lost when the instance restarts
+or sleeps. Counter recovery on startup maintains sequential PO numbers within a running session.
+This is acceptable for a demonstration; production use would require a database.
 
 ---
 
@@ -288,7 +299,7 @@ fly deploy
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `Missing LLM credentials` on startup | No API key set | Add `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` to `.env` |
+| `/api/chat` returns HTTP 503 | LLM provider not configured | Add `LLM_PROVIDER`, `LLM_MODEL`, and the key to `.env`; the server starts fine without credentials |
 | `Your credit balance is too low` | API key has no credits | Add credits at console.anthropic.com or switch to a funded key |
 | Agent returns "I have reached the iteration limit" | Too many tool calls | Increase `MAX_ITERATIONS` in `.env` |
 | `case not found` tool error | Fixture directory missing | Verify `fixtures/challenge-03/requests/<case>/` exists |
@@ -305,4 +316,5 @@ fly deploy
 - **File-backed persistence is single-process.** `orders.jsonl` and `control.csv` are plain files; a multi-process or multi-server deployment would require a database or distributed lock.
 - **Live LLM testing requires reviewer credentials and credits.** The 7 skipped tests in `tests/integration/live-*.ts` require `RUN_LIVE_LLM_TESTS=true` and a funded API key. All other tests are deterministic and require no key.
 - **Approval evidence is plain text only (P0).** A PDF version (`approval.pdf`) is an optional P1 deliverable and is not included.
-- **No deployment URL.** Local execution is required for demo purposes (–10 points per PRD section 9.3).
+- **Live LLM flow has not been end-to-end tested against a real provider.** Insufficient API credits prevented a funded live run. All deterministic paths (tools, validation, SAP mock) are fully tested. The 7 skipped tests in `tests/integration/live-*.ts` and `tests/llm/` cover the live-provider path and require a funded key plus `RUN_LIVE_LLM_TESTS=true`.
+- **No live deployment URL yet.** The Render Free service has not been created. Deploy via the Dashboard as described above; update this line with the public URL after deployment.

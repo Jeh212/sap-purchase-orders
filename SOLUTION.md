@@ -170,7 +170,7 @@ SAP's standard Purchase Order OData v2 service is the most maintainable option b
 2. The approval body check is case-insensitive (`/approved/i`), since the PRD says "contains 'Approved'" but does not specify exact case.
 3. `quote.txt` contains a single supplier section; the buyer's own company name and NIT appear in a separate section and are skipped by parsing the "PROVEEDOR" heading.
 4. The ±2% RC5 tolerance uses `request.total_value` as the denominator (not the quote total).
-5. RC3 uses the approver limit for the specific cost center, not a global limit.
+5. RC3 uses the individual approver's `limit` field from the cost-center master data record, not a cost-center-level cap.
 6. PO item number numbering starts at 10 and increments by 10 (SAP convention).
 7. `unit` is derived from the description text: "hour" → `H`; otherwise `EA`.
 8. The `quote_ref` in `PurchaseOrder.reference` is the supplier's tax ID extracted from the quote, since no invoice number is present in quote fixtures.
@@ -235,7 +235,7 @@ authoritative sources. A model-supplied blocker list is never trusted.
   - Tool results
   - `log.jsonl` (tool log records summaries, not payloads)
   - The browser bundle (all model calls are server-side)
-- The `GET /api/health` endpoint returns `{ ok, provider, model }` with no key material.
+- The `GET /api/health` endpoint returns `{ ok, provider, model, llmConfigured }` with no key material.
 - Rate limiting (`RATE_LIMIT_PER_MINUTE`, default 30 req/min per IP) and a 2 000-character
   message length cap protect the public endpoint.
 
@@ -271,6 +271,14 @@ Two skipped test *files* are the live-provider LLM integration tests (`tests/llm
 require a real API key and are explicitly skipped when no key is set. The 7 skipped individual
 tests are within those files. All other tests are deterministic and pass without any API key.
 
+**Live LLM integration has not been end-to-end tested against a real provider.** Insufficient
+API credits prevented a funded run of `tests/integration/live-workflows.test.ts` or a real
+conversation through the web UI. The LLM adapter (`AnthropicAdapter`, `OpenAiAdapter`),
+tool-call dispatch, and agent loop have been verified by tests using a deterministic stub
+adapter. The live-provider path (sending real requests to Anthropic or OpenAI, receiving
+tool calls, and completing a full PO workflow) remains unconfirmed until a reviewer with a
+funded key tests it.
+
 ### Browser acceptance
 
 ```
@@ -302,17 +310,22 @@ npm run demo  →  exit 0  (all 6 cases correct, idempotency verified)
 
 ### Tools and workflow
 
-| Tool | How it was used |
-|------|----------------|
-| Claude Opus 4 (Anthropic) via Conductor | Architecture design, implementation plan, TypeScript scaffolding, domain rule implementation, agent loop, LLM adapter layer, confirmation state machine, test authoring, documentation |
-| Claude Sonnet 4.6 (Anthropic) via Conductor | Phase-by-phase code generation and iteration on generated code |
-| ChatGPT (OpenAI) | Initial requirements walkthrough; session terminated before any code was written |
+| Tool | Tasks |
+|------|-------|
+| Claude Opus (Anthropic) via Conductor | Implementation planning and architecture; initial code generation for domain rules, SAP mock, tool implementations, LLM adapter layer, agent loop, confirmation state machine, test suites, and documentation drafts |
+| Claude Sonnet (Anthropic) via Conductor | Phase-by-phase implementation and iteration; subsequent code generation and revision rounds within each phase |
+| ChatGPT (OpenAI) | PRD analysis and challenge strategy; architectural review of the proposed approach; assessment of implementation reports at phase boundaries; identification of potential defects and edge cases; preparation of validation criteria and test expectations |
 
 ### Requirements analysis and planning
 
-The implementation started with a multi-pass audit of the PRD, IMPLEMENTATION_BRIEF, and all
-six fixture packages. Each assumption was classified as `[PRD]`, `[FIXTURE]`, `[DESIGN]`, or
-`[AMBIGUITY]` and documented. The plan was reviewed and approved before any code was written.
+ChatGPT was used to walk through the PRD and identify ambiguities, edge cases, and compliance
+risks before implementation started. Each assumption was classified as `[PRD]`, `[FIXTURE]`,
+`[DESIGN]`, or `[AMBIGUITY]` and documented. The plan was reviewed and approved by the engineer
+before any code was written.
+
+Claude (Opus and Sonnet via Conductor) was used for all code generation across phases. The
+generated code was reviewed for PRD compliance and correctness; decisions that required
+interpreting ambiguous requirements were made by the engineer (see below).
 
 ### AI-assisted code generation
 
@@ -324,14 +337,23 @@ Claude generated initial implementations for:
 - `src/server.ts` — agent loop with token budget and iteration cap
 - Test suites for all layers
 
+Generated output was not accepted verbatim in all cases; see "Bugs discovered in AI-generated
+suggestions" for specific corrections that were required. Not every generated line was manually
+inspected at the character level — review was focused on correctness of business logic,
+architecture decisions, and PRD compliance.
+
 ### Human review of architecture and business rules
 
-Every generated file was read line-by-line before acceptance. The following decisions were
-made explicitly by the engineer, not delegated to AI:
+The following decisions were made explicitly by the engineer, not delegated to AI:
 
-- **RC3 design choice**: two readings of "approver limit" were possible (check actual approver's
-  limit vs. check the cost center's maximum capacity). The plan documents both; Reading B
-  (cost-center capacity) was chosen because it is an independently meaningful business fact.
+- **RC3 design choice**: two readings of "approver limit" were possible — Reading A: the
+  specific approver's individual authorization ceiling, or Reading B: a single maximum capacity
+  attached to the cost center itself. Reading A was implemented (`applyRC3` compares
+  `totalValue > approverRecord.limit`). The fixture data supports this: each approver row in
+  `cost-centers.json` carries its own `limit` field (e.g. mlopez: 50 000 000 COP, dgarcia:
+  200 000 000 COP). There is no separate cost-center-level cap in the master data. Reading B
+  was considered and rejected because no such field exists in the fixtures and inventing a
+  default would not be grounded in authoritative data.
 - **RC5 denominator**: the tolerance check uses `request.total_value` as denominator, not the
   quote total. Verified by reading the PRD and confirmed by a boundary test.
 - **Confirmation state machine**: the 5-state machine (`NONE → PENDING → CONFIRMED → CONSUMED`;
@@ -427,7 +449,7 @@ services:
 
 1. Go to [dashboard.render.com](https://dashboard.render.com) → **New** → **Web Service**.
 2. Connect the GitHub repository `Jeh212/sap-purchase-orders`.
-3. Select branch `main`.
+3. Select branch `Jeh212/periferia-challenge-03-plan`.
 4. Render auto-detects `render.yaml`; confirm the settings shown.
 5. In **Environment Variables**, add:
    - `LLM_PROVIDER` = `anthropic`
@@ -458,8 +480,8 @@ would need a database or persistent volume.
 
 ### Security posture for cloud deployment
 
-- All LLM API keys are set via `fly secrets` — they are injected as environment variables,
-  never stored in the repository or Docker image.
+- LLM API keys are set as environment variables in the Render Dashboard — they are never stored
+  in the repository or the build artifact.
 - The frontend bundle contains no secrets; it communicates only with the `/api/*` routes of
   the same origin.
 - Rate limiting is enabled by default (30 req/min per IP); raise `RATE_LIMIT_PER_MINUTE` if
